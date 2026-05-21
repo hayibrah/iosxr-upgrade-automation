@@ -1,0 +1,72 @@
+# =============================================================================
+# FILE    : testbed.yaml
+# PURPOSE : pyATS topology file — defines devices for pre_check.py and
+#           post_check.py.  Add one entry under 'devices:' per router.
+#
+# USAGE   : python3 pre_check.py  --testbed testbed.yaml
+#           python3 post_check.py --testbed testbed.yaml
+#
+# DOCS    : https://pubhub.devnetcloud.com/media/pyats/docs/topology/schema.html
+# =============================================================================
+
+testbed:
+  name: iosxr_upgrade_testbed
+  credentials:
+    default:
+      username: "%ENV{NET_USERNAME}"   # export NET_USERNAME=<your-user>
+      password: "%ENV{NET_PASSWORD}"   # export NET_PASSWORD=<your-pass>
+
+devices:
+
+  # ---------------------------------------------------------------------------
+  # Device 1 — NCS 5500 (adjust hostname/IP/platform to match your inventory)
+  # ---------------------------------------------------------------------------
+  router-1:
+    alias: router-1
+    os:       iosxr
+    platform: ncs5500
+    type:     router
+    connections:
+      defaults:
+        class: unicon.Unicon
+      cli:
+        protocol: ssh
+        ip:       192.168.1.1
+        port:     22
+        # Optional: per-device credentials override testbed-level defaults
+        # credentials:
+        #   default:
+        #     username: admin
+        #     password: secret
+
+  # ---------------------------------------------------------------------------
+  # Device 2 — ASR 9000 example
+  # ---------------------------------------------------------------------------
+  router-2:
+    alias: router-2
+    os:       iosxr
+    platform: asr9k
+    type:     router
+    connections:
+      defaults:
+        class: unicon.Unicon
+      cli:
+        protocol: ssh
+        ip:       192.168.1.2
+        port:     22
+
+  # ---------------------------------------------------------------------------
+  # Add additional devices following the same pattern
+  # ---------------------------------------------------------------------------
+  # router-3:
+  #   alias: router-3
+  #   os:       iosxr
+  #   platform: ncs5500
+  #   type:     router
+  #   connections:
+  #     defaults:
+  #       class: unicon.Unicon
+  #     cli:
+  #       protocol: ssh
+  #       ip:       192.168.1.3
+  #       port:     22

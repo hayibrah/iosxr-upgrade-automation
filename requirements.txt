@@ -1,0 +1,36 @@
+# =============================================================================
+# Python dependencies for iosxr-upgrade-automation
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# Tested with Python 3.9+
+# =============================================================================
+
+# --- pyATS / Genie core ---
+# pyats[full] installs the complete suite including Genie, Unicon, and all
+# platform parsers. Use this for simplicity.
+pyats[full]>=23.0
+
+# If you want to minimise install size, use these explicit packages instead:
+# pyats>=23.0
+# genie>=23.0
+# genie.libs.parser>=23.0
+# genie.libs.ops>=23.0
+# unicon>=23.0
+# unicon.plugins>=23.0
+
+# --- Ansible + IOS-XR collection ---
+# Ansible core
+ansible>=8.0
+
+# Cisco IOS-XR Ansible collection (install separately via ansible-galaxy)
+# Run: ansible-galaxy collection install cisco.iosxr
+# Or add to a collections/requirements.yml and run:
+#   ansible-galaxy collection install -r collections/requirements.yml
+
+# Ansible utils collection (used for fact_diff if you extend the playbook)
+# Run: ansible-galaxy collection install ansible.utils
+
+# --- General utilities ---
+PyYAML>=6.0          # YAML parsing (also used by Ansible/pyATS internally)

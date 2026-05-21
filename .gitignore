@@ -1,0 +1,55 @@
+# =============================================================================
+# .gitignore — iosxr-upgrade-automation
+# =============================================================================
+
+# ── Snapshots (contain live device state — may include sensitive routing info)
+snapshots/*.json
+snapshots/*.log
+
+# Keep the snapshots directory itself (git won't track empty dirs)
+!snapshots/.gitkeep
+
+# ── Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ── pyATS / Genie runtime artifacts
+*.testbed.yaml.bak
+pyats_log/
+pyats.log
+pyats_results/
+
+# ── Ansible
+*.retry
+.ansible/
+
+# ── Credentials — NEVER commit these
+*.vault
+vault_pass.txt
+.env
+.envrc
+
+# ── OS
+.DS_Store
+Thumbs.db
+
+# ── IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+

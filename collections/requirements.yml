@@ -1,0 +1,17 @@
+---
+# =============================================================================
+# FILE    : collections/requirements.yml
+# PURPOSE : Ansible collection dependencies.
+#
+# Install with:
+#   ansible-galaxy collection install -r collections/requirements.yml
+# =============================================================================
+collections:
+  - name: cisco.iosxr
+    version: ">=5.0.0"
+
+  - name: ansible.utils
+    version: ">=2.0.0"
+
+  - name: ansible.netcommon
+    version: ">=5.0.0"

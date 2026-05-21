@@ -1,0 +1,196 @@
+---
+# =============================================================================
+# FILE    : upgrade_iosxr.yml
+# PURPOSE : Cisco IOS-XR software upgrade ONLY.
+#           Pre-checks and post-checks are handled separately by pyATS/Genie.
+#           Run order:
+#             1. python3 pre_check.py  --testbed testbed.yaml
+#             2. ansible-playbook upgrade_iosxr.yml
+#             3. python3 post_check.py --testbed testbed.yaml
+# =============================================================================
+- name: Cisco IOS-XR Software Upgrade
+  hosts: iosxr_routers
+  gather_facts: false
+
+  vars:
+    # -------------------------------------------------------------------------
+    # REQUIRED: Set these per-upgrade. Override with -e on the CLI if preferred.
+    # Example below: NCS 5500 upgrade from 24.2.1 → 25.2.1
+    # -------------------------------------------------------------------------
+    target_version: "25.2.1"
+    image_source:   "sftp://mgmt-server.local/images/ncs5500-x64-25.2.1.iso"
+    image_filename: "ncs5500-x64-25.2.1.iso"
+
+    # -------------------------------------------------------------------------
+    # Timeouts (seconds). Must also be reflected in ansible.cfg:
+    #   [persistent_connection]
+    #   connect_timeout = 2700
+    #   command_timeout = 2700
+    # -------------------------------------------------------------------------
+    install_add_timeout:      1800   # 30 min  — image transfer
+    install_activate_timeout: 1200   # 20 min  — activation + reload trigger
+    install_commit_timeout:   300    #  5 min  — commit
+
+    # Minimum free bytes required on harddisk: before staging (default = 10 GB)
+    min_free_bytes: 10737418240
+
+  tasks:
+
+    # =========================================================================
+    # STEP 1 — GUARD RAILS: version check + disk check
+    # =========================================================================
+    - name: Fetch current IOS-XR version string
+      cisco.iosxr.iosxr_command:
+        commands: "show version | include 'Cisco IOS XR Software'"
+      register: current_version_raw
+
+    - name: Parse active version into a fact
+      ansible.builtin.set_fact:
+        active_version: >-
+          {{ current_version_raw.stdout[0]
+             | regex_search('Version\s+(\S+)', '\1')
+             | first }}
+
+    - name: Display current vs target version
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} — running {{ active_version }}, target {{ target_version }}"
+
+    - name: Skip host — already on target version
+      ansible.builtin.meta: end_host
+      when: active_version == target_version
+
+    - name: Check free disk space on harddisk
+      cisco.iosxr.iosxr_command:
+        commands: "dir harddisk: | include bytes free"
+      register: disk_check
+
+    - name: Assert minimum free disk space
+      ansible.builtin.assert:
+        that:
+          - >-
+            (disk_check.stdout[0]
+             | regex_search('([0-9]+) bytes free', '\1')
+             | first | int) > min_free_bytes
+        fail_msg: >-
+          ABORT: Insufficient free space on harddisk: for {{ inventory_hostname }}.
+          Required: {{ min_free_bytes }} bytes. Check 'dir harddisk:' manually.
+
+    # =========================================================================
+    # STEP 2 — STAGE IMAGE
+    # =========================================================================
+    - name: BLOCK — Stage + Activate + Commit
+      block:
+
+        - name: Transfer and stage installation package
+          cisco.iosxr.iosxr_command:
+            commands:
+              - command: "install add source {{ image_source }} {{ image_filename }}"
+                # IOS-XR may prompt for confirmation depending on version
+                prompt:
+                  - 'Do you want to continue\?.*\[yes/no\]'
+                  - 'Do you want to continue'
+                  - '\[confirm\]'
+                answer:
+                  - 'yes'
+                  - 'yes'
+                  - 'y'
+          vars:
+            ansible_command_timeout: "{{ install_add_timeout }}"
+
+        - name: Verify package is in inactive state before activating
+          cisco.iosxr.iosxr_command:
+            commands: "show install inactive summary | include {{ target_version }}"
+          register: inactive_pkg_check
+
+        - name: Assert package was staged successfully
+          ansible.builtin.assert:
+            that:
+              - target_version in inactive_pkg_check.stdout[0]
+            fail_msg: >-
+              ABORT: Package {{ target_version }} not found in inactive packages.
+              Stage may have failed. Run 'show install log' to investigate.
+
+        # =====================================================================
+        # STEP 3 — ACTIVATE (triggers reload)
+        # =====================================================================
+        - name: Activate target version — this will trigger a system reload
+          cisco.iosxr.iosxr_command:
+            commands:
+              - command: "install activate version {{ target_version }} prompt-noop"
+          vars:
+            ansible_command_timeout: "{{ install_activate_timeout }}"
+
+        # Give the device a moment to begin reloading before we start polling
+        - name: Wait for device to begin reload (initial hold-off)
+          ansible.builtin.pause:
+            seconds: 60
+
+        # =====================================================================
+        # STEP 4 — WAIT FOR RECONNECT
+        # =====================================================================
+        - name: Wait for device to return online after reload
+          ansible.builtin.wait_for_connection:
+            delay:   120   # seconds before first poll — let XR fully boot
+            sleep:    30   # seconds between retries
+            timeout: 900   # give up after 15 minutes
+
+        # =====================================================================
+        # STEP 5 — COMMIT
+        # =====================================================================
+        - name: Commit new software version (makes it boot-persistent)
+          cisco.iosxr.iosxr_command:
+            commands: "install commit"
+          vars:
+            ansible_command_timeout: "{{ install_commit_timeout }}"
+
+        - name: Confirm active version post-upgrade
+          cisco.iosxr.iosxr_command:
+            commands: "show version | include 'Cisco IOS XR Software'"
+          register: post_version_raw
+
+        - name: Assert device is now running target version
+          ansible.builtin.assert:
+            that:
+              - target_version in post_version_raw.stdout[0]
+            fail_msg: >-
+              ERROR: Device {{ inventory_hostname }} does not appear to be
+              running {{ target_version }} after commit. Check 'show version'.
+
+        - name: Upgrade complete — version confirmed
+          ansible.builtin.debug:
+            msg: >-
+              SUCCESS: {{ inventory_hostname }} upgraded to {{ target_version }}.
+              Run post_check.py to validate network state.
+
+      # =======================================================================
+      # RESCUE — Fires if ANY task in the block above fails
+      # =======================================================================
+      rescue:
+        - name: ALERT — Upgrade block failed
+          ansible.builtin.debug:
+            msg: |
+              ============================================================
+              UPGRADE FAILED: {{ inventory_hostname }}
+              The device may be mid-reload, unreachable, or in a bad state.
+              Immediate actions:
+                1. Verify console/OOB connectivity
+                2. If device is reachable, run:
+                     show install log
+                     show install active summary
+                3. To roll back:
+                     install rollback to committed
+              ============================================================
+
+        - name: Attempt automatic rollback to last committed version
+          cisco.iosxr.iosxr_command:
+            commands: "install rollback to committed"
+          ignore_errors: true   # Don't mask the original failure
+          vars:
+            ansible_command_timeout: 600
+
+        # Re-raise the failure so the play is marked as failed in CI/reporting
+        - name: Re-raise failure after rollback attempt
+          ansible.builtin.fail:
+            msg: >-
+              Upgrade failed on {{ inventory_hostname }}.
+              Rollback was attempted. Verify device state manually.
