@@ -280,6 +280,9 @@ def print_report(device_name: str,
 
     # ── 4. Structural diff — informational ───────────────────────────────────
     print(f"\n  Structural Diff  (informational — does not affect verdict)")
+    print(f"  Expected changes after an upgrade: software version strings in")
+    print(f"  'show platform' and route/LSP sequence numbers. Unexpected")
+    print(f"  changes: interface state flaps, missing neighbors, VRF changes.")
     print(f"  {'-'*63}")
     any_diff = False
     for key, diff_output in diff_results.items():
@@ -289,15 +292,18 @@ def print_report(device_name: str,
             print(f"  {key:<35} : {diff_output}")
         else:
             any_diff = True
-            print(f"  {key:<35} : DIFFERENCES FOUND ↓")
+            # Flag platform diffs as expected (software version change)
+            note = " (version change expected)" if key == "platform" else ""
+            print(f"  {key:<35} : DIFFERENCES FOUND{note} ↓")
             for line in diff_output.splitlines():
                 print(f"      {line}")
 
     if any_diff:
         print(
             f"\n  NOTE: Structural differences above are informational only.\n"
-            f"  Review to confirm they are expected post-reload changes\n"
-            f"  (e.g. new version string, updated LSP entries, timer resets)."
+            f"  'platform' diffs show the software version change per slot —\n"
+            f"  this is expected and confirmed by the version check above.\n"
+            f"  Investigate any diffs in bgp/ospf/isis/mpls/interfaces."
         )
 
     # ── Verdict ──────────────────────────────────────────────────────────────
@@ -411,9 +417,9 @@ def main():
                                snapshot_dir, post_operational)
 
             # Version check (hard)
-            target_version = args.target_version or "UNKNOWN"
-            version_ok     = (
-                verify_version(device, target_version)
+            target_version = args.target_version or "not specified"
+            version_ok = (
+                verify_version(device, args.target_version)
                 if args.target_version else True
             )
 

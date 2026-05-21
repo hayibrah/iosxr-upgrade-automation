@@ -74,14 +74,14 @@ def save_snapshot(device_name: str, snapshot: dict, counts: dict,
 
 def print_summary(device_name: str, counts: dict) -> None:
     width = 55
-    log.info("=" * width)
-    log.info("  PRE-CHECK SUMMARY — %s", device_name)
-    log.info("=" * width)
+    print("=" * width)
+    print(f"  PRE-CHECK SUMMARY -- {device_name}")
+    print("=" * width)
     for k, v in counts.items():
         label = k.replace("_", " ").title()
         value = str(v) if v is not None else "N/A (parse error)"
-        log.info("  %-40s : %s", label, value)
-    log.info("=" * width)
+        print(f"  {label:<40} : {value}")
+    print("=" * width)
 
 
 # ---------------------------------------------------------------------------

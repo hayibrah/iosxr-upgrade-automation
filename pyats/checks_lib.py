@@ -83,6 +83,37 @@ DIFF_EXCLUDE = [
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _is_error(val: Any) -> bool:
+    """Return True if *val* is a collection-error sentinel ``{"error": "..."}``."""
+    return isinstance(val, dict) and tuple(val) == ("error",)
+
+
+def _run_command(device, command: str) -> Any:
+    """
+    Execute *command* on *device*, preferring the Genie structured parser.
+    Falls back to raw ``execute()`` if no parser exists.
+    Returns the parsed dict, the raw CLI string, or ``{"error": "<msg>"}``
+    on failure so callers can keep processing without crashing.
+    """
+    try:
+        result = device.parse(command)
+        log.debug("  [%s] '%s' -- Genie parser OK", device.name, command)
+        return result
+    except Exception:
+        pass  # no parser available -- try raw CLI
+    try:
+        result = device.execute(command)
+        log.debug("  [%s] '%s' -- raw CLI fallback", device.name, command)
+        return result
+    except Exception as exc:
+        log.warning("  [%s] '%s' failed: %s", device.name, command, exc)
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # Config loader
 # ---------------------------------------------------------------------------
 
@@ -222,20 +253,7 @@ def collect_operational_state(device, op_checks: list,
             continue
 
         log.info("  [%s] Operational check: %s", device.name, command)
-
-        try:
-            result = device.parse(command)
-            log.debug("  [%s] '%s' — Genie parser OK", device.name, command)
-        except Exception:
-            # No Genie parser for this command; fall back to raw CLI
-            try:
-                result = device.execute(command)
-                log.debug("  [%s] '%s' — raw CLI fallback", device.name, command)
-            except Exception as exc:
-                log.warning("  [%s] '%s' failed: %s", device.name, command, exc)
-                result = {"error": str(exc)}
-
-        results[name] = result
+        results[name] = _run_command(device, command)
 
     return results
 
@@ -282,10 +300,8 @@ def compare_operational_checks(
             })
             continue
 
-        # ── Either side had a collection error ───────────────────────────────
-        pre_err  = isinstance(pre_val,  dict) and set(pre_val)  == {"error"}
-        post_err = isinstance(post_val, dict) and set(post_val) == {"error"}
-        if pre_err or post_err:
+        # -- Either side had a collection error --------------------------------
+        if _is_error(pre_val) or _is_error(post_val):
             log.warning("  Operational check '%s': skipped (collection error)", name)
             continue
 
@@ -364,18 +380,14 @@ def extract_metric(
         elif key in node:
             yield from _walk(node[key], rest)
 
-    # Guard: if data indicates a prior collection error, skip silently
-    if isinstance(data, dict) and "error" in data and len(data) == 1:
+    # Guard: skip silently if data indicates a prior collection error
+    if _is_error(data):
         return None
 
     leaves = list(_walk(data, path))
 
     if aggregate == "sum":
-        total = 0
-        for leaf in leaves:
-            if isinstance(leaf, (int, float)):
-                total += leaf
-        return total
+        return sum(leaf for leaf in leaves if isinstance(leaf, (int, float)))
 
     # aggregate == "count"
     if filter_cfg:
@@ -455,13 +467,12 @@ def derive_counts(snapshot: dict, health_checks: Optional[list] = None) -> dict:
     # Traverses both 'lc' (line cards) and 'rp' (route processors) in every
     # slot and counts how many are in "IOS XR RUN" state.
     try:
-        platform    = snapshot.get("platform", {})
-        slot_states = []
-        for slot_data in platform.get("slot", {}).values():
-            for card_data in slot_data.get("lc", {}).values():
-                slot_states.append(card_data.get("state", "").upper())
-            for rp_data in slot_data.get("rp", {}).values():
-                slot_states.append(rp_data.get("state", "").upper())
+        slot_states = [
+            card.get("state", "").upper()
+            for slot in snapshot.get("platform", {}).get("slot", {}).values()
+            for sub_key in ("lc", "rp")
+            for card in slot.get(sub_key, {}).values()
+        ]
         counts["platform_cards_running"] = slot_states.count("IOS XR RUN")
     except Exception as exc:
         log.warning("Could not derive platform-cards-running count: %s", exc)

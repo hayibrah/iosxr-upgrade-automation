@@ -1,257 +1,146 @@
-# =============================================================================
-# FILE    : checks.yaml
-# PURPOSE : User-configurable health checks for IOS-XR pre/post upgrade
-#           validation.  No Python changes needed — edit this file only.
+# checks.yaml — IOS-XR upgrade health checks (NCS 5500  24.2.1 → 25.2.1)
+# Edit this file to add/remove checks. No Python changes needed.
 #
-# Example upgrade: NCS 5500  24.2.1 → 25.2.1
+# health_checks    : numeric count must NOT drop post-upgrade  (hard fail)
+# operational_checks: command output must be identical pre/post (hard fail)
 #
-# ─── HOW IT WORKS ────────────────────────────────────────────────────────────
-#
-#   PRE-CHECK   (python3 pyats/pre_check.py)
-#     Connects to every device, runs all enabled commands, saves a JSON
-#     snapshot to ./snapshots/.
-#
-#   POST-CHECK  (python3 pyats/post_check.py --target-version 25.2.1)
-#     Re-runs the same commands, compares against the snapshot.
-#     → health_checks     : numeric counts must NOT drop below baseline (hard fail)
-#     → operational_checks: command output must be identical pre/post (hard fail)
-#
-# ─── QUICK START — adding your own check ────────────────────────────────────
-#
-#   Simplest form (operational_check — diff-based, fail on any change):
-#
-#     - name:    my_check
-#       command: "show bgp summary"
-#       enabled: true
-#
-#   Numeric count assertion (health_check — fail if count drops post-upgrade):
-#
-#     - key:     my_bgp
-#       command: "show bgp summary"
-#       parser:  true
-#       enabled: true
-#       test_cases:
-#         - name:       "BGP Established Sessions"
-#           metric_key: my_bgp_established
-#           extract:
-#             path:      ["instance", "*", "vrf", "*", "neighbor", "*"]
-#             filter:    {field: session_state, regex: "(?i)^established$"}
-#             aggregate: count
-#           assert: gte_pre
-#
-# ─── health_check fields ─────────────────────────────────────────────────────
-#
-#   key       snake_case identifier — used as the key in the JSON snapshot
-#   command   IOS-XR show command to run
-#   parser    true  = Genie structured parser (required for test_cases)
-#             false = raw CLI text
-#   enabled   false = skip without removing the entry
-#
-# ─── test_case fields ────────────────────────────────────────────────────────
-#
-#   name        Human-readable label shown in the report
-#   metric_key  Unique snake_case key written into the counts snapshot
-#   extract
-#     path      List of dict keys to traverse. Use "*" to expand across all
-#               child values (all VRFs, all neighbors, all interfaces, …)
-#     filter    (optional) Keep only leaf dicts where:
-#                 field — this key's value …
-#                 regex — … matches this Python regex
-#     aggregate count (default) — number of matching leaf nodes
-#               sum             — sum of numeric leaf values
-#   assert    "gte_pre" — post value must be >= pre-upgrade value
-#
-# =============================================================================
+# To add a diff-based check:
+#   - name: my_check
+#     command: "show bgp neighbors"
+#     enabled: true
 
-
-# =============================================================================
-# health_checks
-#
-# Minimum set required to gate a successful IOS-XR upgrade.
-# Each entry has a numeric test_case — if the count drops post-upgrade,
-# post_check.py returns a non-zero exit code and prints a FAIL verdict.
-#
-#   1. Platform cards   — hardware must fully come back (IOS XR RUN)
-#   2. Interfaces UP    — no interfaces must go dark
-#   3. BGP sessions     — peering must recover
-#   4. OSPF neighbors   — IGP adjacencies must recover (disable if IS-IS only)
-#   5. IS-IS neighbors  — IGP adjacencies must recover (disable if OSPF only)
-#   6. MPLS LDP         — label distribution must recover
-#   7. IPv4 routes      — routing table must not shrink
-# =============================================================================
-
+# ------------------------------------------------------------------------------
+# health_checks — post count >= pre count, or FAIL
+# ------------------------------------------------------------------------------
 health_checks:
 
-  # ---------------------------------------------------------------------------
-  # 1. PLATFORM — All line cards and RPs must be in IOS XR RUN state
-  #    (count is derived in checks_lib.derive_counts; no path expression needed)
-  # ---------------------------------------------------------------------------
-  - key:     platform
+  # 1. Platform cards in IOS XR RUN (count derived in checks_lib, no path needed)
+  - key: platform
     command: "show platform"
-    parser:  true
+    parser: true
     enabled: true
 
-  # ---------------------------------------------------------------------------
-  # 2. INTERFACES — UP interface count must not drop
-  # ---------------------------------------------------------------------------
-  - key:     interfaces
+  # 2. Interfaces UP
+  - key: interfaces
     command: "show interfaces"
-    parser:  true
+    parser: true
     enabled: true
     test_cases:
-      - name:       "Interfaces UP"
+      - name: "Interfaces UP"
         metric_key: interfaces_up
         extract:
-          path:      ["*"]
-          filter:    {field: line_protocol, regex: "(?i)^up$"}
+          path: ["*"]
+          filter: {field: line_protocol, regex: "(?i)^up$"}
           aggregate: count
         assert: gte_pre
 
-  # ---------------------------------------------------------------------------
-  # 3. BGP — Established session count must not drop
-  # ---------------------------------------------------------------------------
-  - key:     bgp_summary
+  # 3. BGP Established sessions
+  - key: bgp_summary
     command: "show bgp summary"
-    parser:  true
+    parser: true
     enabled: true
     test_cases:
-      - name:       "BGP Established Sessions"
+      - name: "BGP Established Sessions"
         metric_key: bgp_established
         extract:
-          path:      ["instance", "*", "vrf", "*", "neighbor", "*"]
-          filter:    {field: session_state, regex: "(?i)^established$"}
+          path: ["instance", "*", "vrf", "*", "neighbor", "*"]
+          filter: {field: session_state, regex: "(?i)^established$"}
           aggregate: count
         assert: gte_pre
 
-  # ---------------------------------------------------------------------------
-  # 4. OSPF — FULL neighbor count must not drop
-  #    Set enabled: false if the network runs IS-IS only.
-  # ---------------------------------------------------------------------------
-  - key:     ospf_neighbor
+  # 4. OSPF FULL neighbors — disable if IS-IS only
+  - key: ospf_neighbor
     command: "show ospf neighbor"
-    parser:  true
+    parser: true
     enabled: true
     test_cases:
-      - name:       "OSPF FULL Neighbors"
+      - name: "OSPF FULL Neighbors"
         metric_key: ospf_full_neighbors
         extract:
-          path:      ["vrf", "*", "address_family", "*", "instance", "*",
-                      "areas", "*", "interfaces", "*", "neighbors", "*"]
-          filter:    {field: state, regex: "(?i)^full"}
+          path: ["vrf", "*", "address_family", "*", "instance", "*",
+                 "areas", "*", "interfaces", "*", "neighbors", "*"]
+          filter: {field: state, regex: "(?i)^full"}
           aggregate: count
         assert: gte_pre
 
-  # ---------------------------------------------------------------------------
-  # 5. IS-IS — UP neighbor count must not drop
-  #    Set enabled: false if the network runs OSPF only.
-  # ---------------------------------------------------------------------------
-  - key:     isis_neighbor
+  # 5. IS-IS UP neighbors — disable if OSPF only
+  - key: isis_neighbor
     command: "show isis neighbor"
-    parser:  true
+    parser: true
     enabled: true
     test_cases:
-      - name:       "IS-IS Neighbors UP"
+      - name: "IS-IS Neighbors UP"
         metric_key: isis_up_neighbors
         extract:
-          path:      ["isis", "*", "vrf", "*", "interfaces", "*",
-                      "neighbors", "*"]
-          filter:    {field: state, regex: "(?i)^up$"}
+          path: ["isis", "*", "vrf", "*", "interfaces", "*", "neighbors", "*"]
+          filter: {field: state, regex: "(?i)^up$"}
           aggregate: count
         assert: gte_pre
 
-  # ---------------------------------------------------------------------------
-  # 6. MPLS LDP — Neighbor count must not drop
-  # ---------------------------------------------------------------------------
-  - key:     mpls_ldp_neighbor
+  # 6. MPLS LDP neighbors
+  - key: mpls_ldp_neighbor
     command: "show mpls ldp neighbor"
-    parser:  true
+    parser: true
     enabled: true
     test_cases:
-      - name:       "MPLS LDP Neighbors"
+      - name: "MPLS LDP Neighbors"
         metric_key: mpls_ldp_neighbors
         extract:
-          path:      ["vrf", "*", "neighbor", "*"]
+          path: ["vrf", "*", "neighbor", "*"]
           aggregate: count
         assert: gte_pre
 
-  # ---------------------------------------------------------------------------
-  # 7. ROUTING TABLE — Total IPv4 route count must not drop
-  # ---------------------------------------------------------------------------
-  - key:     route_summary
+  # 7. Total IPv4 routes
+  - key: route_summary
     command: "show route summary"
-    parser:  true
+    parser: true
     enabled: true
     test_cases:
-      - name:       "Total IPv4 Routes"
+      - name: "Total IPv4 Routes"
         metric_key: total_routes_ipv4
         extract:
-          path:      ["vrf", "*", "address_family", "ipv4",
-                      "routes_per_protocol", "Total", "total"]
+          path: ["vrf", "*", "address_family", "ipv4",
+                 "routes_per_protocol", "Total", "total"]
           aggregate: sum
         assert: gte_pre
 
 
-# =============================================================================
-# operational_checks
-#
-# Simple before/after diff checks.  pre_check.py captures the output;
-# post_check.py re-runs it and diffs.  Any difference = HARD FAILURE.
-#
-# Uses Genie semantic diff when a parser exists (volatile fields like uptime,
-# counters, and sequence numbers are auto-excluded).  Falls back to line-by-line
-# text diff when no parser is available.
-#
-# Add any show command here that should produce identical output before and
-# after the upgrade.  One entry = one command.
-#   name     Unique snake_case identifier
-#   command  IOS-XR show command
-#   enabled  false = skip without removing the entry
-# =============================================================================
-
+# ------------------------------------------------------------------------------
+# operational_checks — full before/after diff, any change = FAIL
+# ------------------------------------------------------------------------------
 operational_checks:
 
-  # Always required — confirm the new image is active and RP state is stable.
-  - name:    install_active_summary
+  # Always on — only way to confirm new image is active (no count equivalent)
+  # NOTE: will always produce a diff — review to confirm 25.2.1 is listed
+  - name: install_active_summary
     command: "show install active summary"
     enabled: true
 
-  - name:    redundancy_summary
+  - name: redundancy_summary       # dual-RP platforms only (ASR9K, NCS5500+RSP)
     command: "show redundancy summary"
-    enabled: true
+    enabled: false
 
-  # ── Optional extras — set enabled: true to activate ───────────────────────
-
-  - name:    ipv4_interface_brief
+  - name: ipv4_interface_brief
     command: "show ipv4 interface brief"
     enabled: false
 
-  - name:    bgp_vrf_all_summary
+  - name: bgp_vrf_all_summary
     command: "show bgp vrf all summary"
     enabled: false
 
-  - name:    mpls_forwarding_summary
+  - name: mpls_forwarding_summary
     command: "show mpls forwarding summary"
     enabled: false
 
-  - name:    mpls_ldp_bindings_summary
+  - name: mpls_ldp_bindings_summary
     command: "show mpls ldp bindings summary"
     enabled: false
 
-  # Add more checks below:
-  # - name:    my_custom_check
-  #   command: "show <something>"
-  #   enabled: true
 
-
-# =============================================================================
-# critical_counts
-#
-# platform_cards_running is the only metric still derived via hardcoded Python
-# in checks_lib.derive_counts() because it requires traversing both 'lc' and
-# 'rp' sub-keys simultaneously — not expressible as a single YAML path.
-#
-# All other metrics are produced by the test_cases above and merged here
-# automatically — you do NOT need to list them again.
-# =============================================================================
+# ------------------------------------------------------------------------------
+# critical_counts — platform_cards_running is hardcoded in checks_lib
+# (requires traversing both lc + rp sub-keys; not expressible as a YAML path)
+# All test_case metric_keys above are auto-merged here — no need to list them.
+# ------------------------------------------------------------------------------
 critical_counts:
   platform_cards_running: "Platform Cards in IOS XR RUN"
